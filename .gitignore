@@ -1,5 +1,5 @@
 # Data (large, re-created by scripts/)
-data/
+/data/
 
 # Python
 __pycache__/
