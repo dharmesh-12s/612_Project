@@ -1,0 +1,17 @@
+stat,value
+Stations modeled,629
+Hours,"43,824 (2021-01-01 to 2025-12-31)"
+Departures at modeled stations,"19,543,076"
+Departures 2021,"2,529,776"
+Departures 2022,"3,323,357"
+Departures 2023,"4,037,097"
+Departures 2024,"4,803,962"
+Departures 2025,"4,848,864"
+Growth 2021 -> 2025,+92%
+Mean departures per station-hour,0.71
+Station-hours with zero departures,72.3%
+Max departures in one station-hour,69
+Peak system hour (avg weekday),17:00
+Outage hours masked,34
+Stations opened after Jan 2021,74
+Busiest station,"Columbus Circle / Union Station (215,450)"

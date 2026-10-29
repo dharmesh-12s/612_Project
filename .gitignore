@@ -1,0 +1,25 @@
+# Data (large, re-created by scripts/)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Training outputs
+checkpoints/
+*.pt
+*.pth
+logs/
+wandb/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+
