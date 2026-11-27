@@ -12,7 +12,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.models.baselines import DLinear, ITransformer, PatchTST  # noqa: E402
 from src.models.lstm import StationLSTM  # noqa: E402
-from src.models.st_transformer import STTransformer  # noqa: E402
+from src.models.attention import MultiHeadAttention  # noqa: E402
+from src.models.st_transformer import NeighborAttention, STTransformer  # noqa: E402
 
 B, N = 2, 20
 
@@ -104,3 +105,30 @@ def test_can_overfit_tiny_batch():
         loss.backward()
         opt.step()
     assert loss.item() < 0.3, loss.item()
+
+
+def test_neighbor_attention_equals_masked_full_attention():
+    """Gathering the k nearest keys must give exactly full attention with -inf outside them."""
+    torch.manual_seed(0)
+    d, h, k = 32, 4, 5
+    full, nb = MultiHeadAttention(d, h).eval(), NeighborAttention(d, h).eval()
+    nb.load_state_dict(full.state_dict())
+    x = torch.randn(3, N, d)
+    dist = torch.rand(N, N)
+    dist_k, idx = dist.topk(k, largest=False)
+    alpha = torch.rand(h)[:, None, None]
+    dense = torch.full((h, N, N), float("-inf"))
+    dense.scatter_(2, idx.expand(h, N, k), (-alpha * dist_k))
+    assert torch.allclose(nb(x, idx, -alpha * dist_k), full(x, x, x, attn_bias=dense), atol=1e-5)
+
+
+def test_gradient_checkpointing_gives_same_gradients():
+    torch.manual_seed(0)
+    a = st(quantiles=(0.5,), dropout=0.0)
+    b = st(quantiles=(0.5,), dropout=0.0, grad_checkpoint=True)
+    b.load_state_dict(a.state_dict())
+    x, cal = batch()
+    a(x, cal).sum().backward()
+    b(x, cal).sum().backward()
+    for (n, p), q in zip(a.named_parameters(), b.parameters()):
+        assert torch.allclose(p.grad, q.grad, atol=1e-5), n

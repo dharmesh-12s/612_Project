@@ -6,7 +6,7 @@ model:
   layers: 2
   dropout: 0.1
 train:
-  batch_size: 4
+  batch_size: 2
   lr: 0.001
   weight_decay: 0.0001
   epochs: 40
@@ -15,5 +15,5 @@ train:
   warmup_frac: 0.05
   val_stride: 24
   eval_stride: 1
-  eval_batch: 8
+  eval_batch: 2
   quantiles: [0.5]

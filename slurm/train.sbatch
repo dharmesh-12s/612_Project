@@ -17,6 +17,7 @@
 module load python
 cd ~/scratch.msml612/612_Project
 source ~/scratch.msml612/venvs/bike/bin/activate      # its activate script also unsets PYTHONPATH
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 nvidia-smi --query-gpu=name,memory.total --format=csv
 echo "CONFIG=$CONFIG SEED=${SEED:-0} JOB=$SLURM_JOB_ID RESTART=${SLURM_RESTART_COUNT:-0}"
