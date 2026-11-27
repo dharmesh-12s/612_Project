@@ -14,6 +14,7 @@ model:
   spatial: true
   k_neighbors: 16
   pre_ln: true
+  grad_checkpoint: true      # needed to fit the 5 GB GPU slice at batch 8
 train:
   batch_size: 8
   lr: 0.001
