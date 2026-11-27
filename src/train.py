@@ -10,6 +10,7 @@ Per run it writes results/runs/<name>/seed<k>/:
     metrics_test.csv   final metrics on 2025
     run_info.json      config, parameters, best epoch, training time
     best.pt            best checkpoint by validation MAE (gitignored)
+    state.pt           latest training state for resuming; deleted when the run finishes (gitignored)
 
 Training details: AdamW, linear warmup + cosine decay, gradient clipping 1.0, bf16 autocast on
 GPU, early stopping on validation MAE. Loss = pinball loss over the model's quantiles
@@ -99,14 +100,50 @@ def headline(df):
     return row["MAE"], row.get("coverage_10_90", float("nan"))
 
 
+def bench(model, opt, win, train_ds, val_ds, tr, quantiles, amp, device, name, n_params):
+    """Seconds per training step / eval batch and peak GPU memory, to plan the compute budget."""
+    sync = torch.cuda.synchronize if device.type == "cuda" else (lambda: None)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    model.train()
+    for i in range(23):
+        if i == 3:
+            sync()
+            t = time.time()
+        x, cal, y, mask = win.batch(np.random.choice(train_ds.origins, tr["batch_size"], replace=False))
+        with torch.autocast(device.type, dtype=torch.bfloat16, enabled=amp):
+            loss = pinball_loss(model(x, cal).float(), y, mask, quantiles)
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        opt.step()
+    sync()
+    step = (time.time() - t) / 20
+    model.eval()
+    eb = tr.get("eval_batch", 8)
+    with torch.no_grad():
+        t = time.time()
+        for i in range(5):
+            x, cal, _, _ = win.batch(val_ds.origins[i * eb:(i + 1) * eb])
+            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=amp):
+                model(x, cal)
+        sync()
+    ev = (time.time() - t) / 5
+    mem = torch.cuda.max_memory_allocated() / 2**30 if device.type == "cuda" else float("nan")
+    epoch_s = step * tr["steps_per_epoch"] + ev * len(val_ds.origins[::tr.get("val_stride", 24)]) / eb
+    final_s = ev * 2 * len(val_ds.origins) / eb / tr.get("eval_stride", 1)          # val + test
+    print(f"BENCH {name:16s} params {n_params:>9,}  step {step:6.3f}s  epoch ~{epoch_s / 60:5.1f} min  "
+          f"final eval ~{final_s / 60:5.1f} min  peak mem {mem:5.2f} GB", flush=True)
+
+
 # ----------------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--max-hours", type=float, default=10.0, help="stop training after this long")
+    ap.add_argument("--max-hours", type=float, default=10.0, help="total training-time budget (across resumes)")
     ap.add_argument("--out", default="results/runs")
     ap.add_argument("--smoke", action="store_true", help="tiny run to check the code end to end")
+    ap.add_argument("--bench", action="store_true", help="time 20 training steps + 5 eval batches, report memory")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
@@ -134,14 +171,43 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min((s + 1) / warm, 0.5 * (1 + math.cos(math.pi * min(1.0, s / total)))))
 
+    if args.bench:
+        bench(model, opt, win, train_ds, val_ds, tr, quantiles, amp, device, cfg["name"], n_params)
+        return
+
     run_dir = Path(args.out) / cfg["name"] / f"seed{args.seed}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    if (run_dir / "run_info.json").exists() and not args.smoke:
+        print(f"{run_dir} is already finished; delete it to retrain.", flush=True)
+        return
     val_sel = val_ds.origins[:: tr.get("val_stride", 24)]
     print(f"[{cfg['name']} seed {args.seed}] {n_params:,} params | device {device} | "
           f"{len(train_ds.origins):,} train windows | val check on {len(val_sel)} windows", flush=True)
 
-    history, best, best_ep, bad, t0 = [], float("inf"), 0, 0, time.time()
-    for epoch in range(1, tr["epochs"] + 1):
+    # resume after an interruption (scavenger jobs can be preempted and requeued)
+    st = {"epoch": 0, "history": [], "best": float("inf"), "best_ep": 0, "bad": 0,
+          "train_seconds": 0.0, "done": False}
+    state_path = run_dir / "state.pt"
+    if state_path.exists():
+        ck = torch.load(state_path, map_location=device, weights_only=False)
+        model.load_state_dict(ck["model"])
+        opt.load_state_dict(ck["opt"])
+        sched.load_state_dict(ck["sched"])
+        np.random.set_state(ck["np_rng"])
+        torch.set_rng_state(ck["torch_rng"])
+        st = ck["st"]
+        print(f"  resumed after epoch {st['epoch']} (best val MAE {st['best']:.4f})", flush=True)
+
+    def save_state():
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "np_rng": np.random.get_state(), "torch_rng": torch.get_rng_state(), "st": st},
+                   state_path.with_suffix(".tmp"))
+        state_path.with_suffix(".tmp").replace(state_path)          # atomic: never a half-written file
+
+    t0 = time.time()
+    for epoch in range(st["epoch"] + 1, tr["epochs"] + 1):
+        if st["done"]:
+            break
         model.train()
         te, losses = time.time(), []
         for _ in range(tr["steps_per_epoch"]):
@@ -157,27 +223,31 @@ def main():
             sched.step()
             losses.append(loss.item())
         val_mae, val_cov = headline(evaluate(model, win, val_sel, groups, tr.get("eval_batch", 8), amp))
-        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)), "val_MAE": val_mae,
-                        "val_coverage": val_cov, "lr": sched.get_last_lr()[0],
-                        "seconds": time.time() - te})
-        pd.DataFrame(history).to_csv(run_dir / "history.csv", index=False)
+        st["train_seconds"] += time.time() - te
+        st["history"].append({"epoch": epoch, "train_loss": float(np.mean(losses)), "val_MAE": val_mae,
+                              "val_coverage": val_cov, "lr": sched.get_last_lr()[0],
+                              "seconds": time.time() - te})
+        pd.DataFrame(st["history"]).to_csv(run_dir / "history.csv", index=False)
         cov = "" if math.isnan(val_cov) else f"  cov {val_cov:.3f}"
         print(f"  epoch {epoch:3d}  loss {np.mean(losses):.4f}  val MAE {val_mae:.4f}{cov}  "
               f"({time.time() - te:.0f}s)", flush=True)
-        if val_mae < best:
-            best, best_ep, bad = val_mae, epoch, 0
+        st["epoch"] = epoch
+        if val_mae < st["best"]:
+            st["best"], st["best_ep"], st["bad"] = val_mae, epoch, 0
             torch.save(model.state_dict(), run_dir / "best.pt")
         else:
-            bad += 1
-            if bad >= tr.get("patience", 6):
-                print(f"  early stop: no improvement for {bad} epochs", flush=True)
-                break
-        if (time.time() - t0) / 3600 > args.max_hours:
-            print("  stopping: time limit reached", flush=True)
-            break
-    train_hours = (time.time() - t0) / 3600
+            st["bad"] += 1
+            if st["bad"] >= tr.get("patience", 6):
+                print(f"  early stop: no improvement for {st['bad']} epochs", flush=True)
+                st["done"] = True
+        if st["train_seconds"] / 3600 > args.max_hours:
+            print("  stopping: training-time limit reached", flush=True)
+            st["done"] = True
+        save_state()
+    history, best, best_ep = st["history"], st["best"], st["best_ep"]
+    train_hours = st["train_seconds"] / 3600
 
-    model.load_state_dict(torch.load(run_dir / "best.pt", map_location=device))
+    model.load_state_dict(torch.load(run_dir / "best.pt", map_location=device, weights_only=True))
     es = tr.get("eval_stride", 1)
     for name, ds in [("val", val_ds), ("test", test_ds)]:
         df = evaluate(model, win, ds.origins[::es], groups, tr.get("eval_batch", 8), amp)
@@ -190,6 +260,7 @@ def main():
             "epochs_run": len(history), "best_val_MAE_check": best, "train_hours": round(train_hours, 3),
             "device": str(device), "config": cfg}
     json.dump(info, open(run_dir / "run_info.json", "w"), indent=2)
+    state_path.unlink(missing_ok=True)                                # optimizer state no longer needed
     print(f"Saved {run_dir}", flush=True)
 
 
