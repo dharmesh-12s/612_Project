@@ -1,0 +1,23 @@
+# Baseline: PatchTST (Nie et al., 2023), patch 16, stride 8, channel-independent
+name: patchtst
+model:
+  type: patchtst
+  patch_len: 16
+  stride: 8
+  d_model: 128
+  n_heads: 8
+  n_layers: 3
+  d_ff: 256
+  dropout: 0.2
+train:
+  batch_size: 4
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 40
+  steps_per_epoch: 300
+  patience: 6
+  warmup_frac: 0.05
+  val_stride: 24
+  eval_stride: 1
+  eval_batch: 8
+  quantiles: [0.5]

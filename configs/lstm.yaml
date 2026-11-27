@@ -1,0 +1,19 @@
+# Baseline: LSTM shared across stations (2 layers, hidden 128)
+name: lstm
+model:
+  type: lstm
+  hidden: 128
+  layers: 2
+  dropout: 0.1
+train:
+  batch_size: 4
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 40
+  steps_per_epoch: 300
+  patience: 6
+  warmup_frac: 0.05
+  val_stride: 24
+  eval_stride: 1
+  eval_batch: 8
+  quantiles: [0.5]

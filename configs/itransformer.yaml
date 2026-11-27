@@ -1,0 +1,21 @@
+# Baseline: iTransformer (Liu et al., 2024), one token per series
+name: itransformer
+model:
+  type: itransformer
+  d_model: 128
+  n_heads: 8
+  n_layers: 3
+  d_ff: 256
+  dropout: 0.1
+train:
+  batch_size: 8
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 40
+  steps_per_epoch: 300
+  patience: 6
+  warmup_frac: 0.05
+  val_stride: 24
+  eval_stride: 1
+  eval_batch: 8
+  quantiles: [0.5]

@@ -1,0 +1,27 @@
+# Ablation step 3: + time embeddings (incl. 2 future calendar tokens) and station embeddings
+name: st3_embeddings
+model:
+  type: st_transformer
+  d_model: 128
+  n_heads: 8
+  n_layers: 3
+  d_ff: 256
+  dropout: 0.1
+  revin: true
+  patch_len: 12
+  time_emb: true
+  station_emb: true
+  spatial: false
+  pre_ln: true
+train:
+  batch_size: 8
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 40
+  steps_per_epoch: 300
+  patience: 6
+  warmup_frac: 0.05
+  val_stride: 24
+  eval_stride: 1
+  eval_batch: 8
+  quantiles: [0.5]

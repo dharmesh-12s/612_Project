@@ -74,7 +74,7 @@ class BikeDataset(Dataset):
         first = max(first, IN_LEN)
         self.origins = np.arange(first, last + 1, stride)
 
-        self.split, self.N, self.times = split, N, times
+        self.split, self.N, self.times, self.data_dir = split, N, times, data_dir
 
     def __len__(self):
         return len(self.origins)

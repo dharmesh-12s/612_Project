@@ -1,0 +1,27 @@
+# Ablation step 1: plain Vaswani encoder on hourly tokens (post-LN, global per-station scaling)
+name: st1_plain
+model:
+  type: st_transformer
+  d_model: 128
+  n_heads: 8
+  n_layers: 3
+  d_ff: 256
+  dropout: 0.1
+  revin: false
+  patch_len: 0
+  time_emb: false
+  station_emb: false
+  spatial: false
+  pre_ln: false
+train:
+  batch_size: 2
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 40
+  steps_per_epoch: 300
+  patience: 6
+  warmup_frac: 0.05
+  val_stride: 24
+  eval_stride: 1
+  eval_batch: 4
+  quantiles: [0.5]
